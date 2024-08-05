@@ -1,5 +1,4 @@
-import http.client, requests, json
-
+import http.client, requests, json, ssl
 
 def get_public_ip():
     try:
@@ -13,45 +12,131 @@ def get_public_ip():
     except requests.RequestException:
         return "Unable to connect to the Internet"
     
-def check_cf_public_ip(account_id, location_id):
-    conn = http.client.HTTPSConnection("api.cloudflare.com")
+def get_location_id(account_id, location_name):
+    conn = http.client.HTTPSConnection(
+        "api.cloudflare.com",
+        context = ssl._create_unverified_context() #skip SSL check, required due to company proxy
+    )
 
     headers = {
         'Content-Type': "application/json",
-        'Authorization': "Bearer XHb1GZJ5Hoar2n8-KiP76PCJQrWaRQXbJ6HBinLt"    
-        }
-    conn.request("GET", "/client/v4/accounts/" + account_id + "/gateway/locations/" + location_id , headers=headers)
+        'Authorization': token_id         
+    }
+    conn.request("GET", "/client/v4/accounts/" + account_id + "/gateway/locations", headers=headers)
     res = conn.getresponse()
     data = res.read()
-    data_list = json.loads(data.decode("utf-8"))
-    cf_public_ip = data_list["result"]["networks"]
+    data_dict = json.loads(data.decode("utf-8"))
+    for location in data_dict["result"]:
+        if location_name in location['name']:
+            return location["id"]
+
+    
+def check_cf_public_ip(account_id, location_id):
+    conn = http.client.HTTPSConnection(
+        "api.cloudflare.com",
+        context = ssl._create_unverified_context() #skip SSL check, required due to company proxy
+        )
+    headers = {
+        'Content-Type': "application/json",
+        'Authorization': token_id   
+        }
+    conn.request("GET", "/client/v4/accounts/" + account_id + "/gateway/locations/" + location_id, headers=headers)
+    res = conn.getresponse()
+    data = res.read()
+    data_dict = json.loads(data.decode("utf-8"))
+    cf_public_ip = data_dict["result"]["networks"]
+
     return cf_public_ip
 
-def update_cf_public_ip(public_ip, account_id, location_id, location_name):
-    conn = http.client.HTTPSConnection("api.cloudflare.com")
+def update_cf_public_ip(public_ip, account_id, location_name, temporary_location_name):
+    conn = http.client.HTTPSConnection(
+        "api.cloudflare.com",
+        context = ssl._create_unverified_context() #skip SSL check, required due to company proxy
+        )
 
-    payload = "{\n  \"client_default\": true,\n  \"ecs_support\": false,\n  \"name\": \""+ location_name +"\",\n  \"networks\": [\n    {\n      \"network\": \""+ public_ip + "/32\"\n    }\n  ]\n}"
+    payload_to_add = {
+        "client_default": True,
+        "ecs_support": False,
+        "name": location_name,
+        "networks": [{"network": public_ip + "/32"}]
+        }
+    
+    payload_to_remove = {
+        "client_default": True,
+        "ecs_support": False,
+        "name": location_name,
+        "networks": []
+        }
+    
+    payload_for_temp = {
+        "client_default": True,
+        "ecs_support": False,
+        "name": temporary_location_name, 
+        "networks": [],
+        "endpoints": {"ipv4": {"enabled": False}, 
+        "ipv6": {"enabled": True}, 
+        "dot": {"enabled": True}, 
+        "doh": {"require_token": False, "enabled": True}}
+        }
+
     headers = {
         'Content-Type': "application/json",
-        'Authorization': "Bearer XHb1GZJ5Hoar2n8-KiP76PCJQrWaRQXbJ6HBinLt"    
+        'Authorization':  token_id
         }
-    conn.request("PUT", "/client/v4/accounts/" + account_id + "/gateway/locations/" + location_id ,payload , headers=headers)
+    
+    conn.request(
+        "POST", 
+        "/client/v4/accounts/" + account_id + "/gateway/locations", 
+        json.dumps(payload_for_temp, indent=2).encode('utf-8'), 
+        headers=headers
+        ) # temporarly create new default DNS location
     res = conn.getresponse()
     data = res.read()
+    print(data.decode("utf-8"))
 
+    conn.request(
+        "DELETE", 
+        "/client/v4/accounts/" + account_id + "/gateway/locations/" + get_location_id(account_id, location_name), 
+        json.dumps(payload_to_remove, indent=2).encode('utf-8'), 
+        headers=headers
+        ) # temporarly remove old production DNS location
+    res = conn.getresponse()
+    data = res.read()
+    print(data.decode("utf-8"))
+
+    conn.request(
+        "POST", 
+        "/client/v4/accounts/" + account_id + "/gateway/locations/", 
+        json.dumps(payload_to_add, indent=2).encode('utf-8'), 
+        headers=headers
+        ) # create new production DNS location
+    res = conn.getresponse()
+    data = res.read()
+    print(data.decode("utf-8"))
+
+    conn.request(
+        "DELETE", 
+        "/client/v4/accounts/" + account_id + "/gateway/locations/" + get_location_id(account_id, temporary_location_name), 
+        json.dumps(payload_for_temp, indent=2).encode('utf-8'), 
+        headers=headers
+        ) # remove temp DNS location
+    res = conn.getresponse()
+    data = res.read()
     print(data.decode("utf-8"))
     
 if __name__ == "__main__":
     account_id = "a0cc8f105980ac537a70355fc8584dad"
-    location_id = "09583314bebb4ed0967d3d27430af062"
+    token_id = "Bearer XHb1GZJ5Hoar2n8-KiP76PCJQrWaRQXbJ6HBinLt"  
     location_name = "Podmiejska"
-
-
+    temporary_location_name = "TMP"
     public_ip = get_public_ip()
-    cf_public_ip = check_cf_public_ip(account_id, location_id)
+    cf_public_ip = check_cf_public_ip(account_id, get_location_id(account_id, location_name))
+
     print(f"Your Public IP is {public_ip}, CF public: {cf_public_ip}")
     if public_ip not in cf_public_ip[0]["network"]:
-        update_cf_public_ip(public_ip, account_id, location_id, location_name)
-        
-
-
+        update_cf_public_ip(
+            public_ip, 
+            account_id, 
+            location_name, 
+            temporary_location_name
+            )
