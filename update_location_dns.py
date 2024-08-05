@@ -1,4 +1,5 @@
 import http.client, requests, json, ssl
+import credentials
 
 def get_public_ip():
     try:
@@ -125,9 +126,9 @@ def update_cf_public_ip(public_ip, account_id, location_name, temporary_location
     print(data.decode("utf-8"))
     
 if __name__ == "__main__":
-    account_id = "a0cc8f105980ac537a70355fc8584dad"
-    token_id = "Bearer XHb1GZJ5Hoar2n8-KiP76PCJQrWaRQXbJ6HBinLt"  
-    location_name = "Podmiejska"
+    account_id = credentials.account_id
+    token_id =   credentials.token_id
+    location_name = credentials.location_name
     temporary_location_name = "TMP"
     public_ip = get_public_ip()
     cf_public_ip = check_cf_public_ip(account_id, get_location_id(account_id, location_name))
