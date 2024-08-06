@@ -134,7 +134,7 @@ if __name__ == "__main__":
     cf_public_ip = check_cf_public_ip(account_id, get_location_id(account_id, location_name))
 
     print(f"Your Public IP is {public_ip}, CF public: {cf_public_ip}")
-    if public_ip not in cf_public_ip[0]["network"]:
+    if public_ip not in cf_public_ip[0]["network"] and "Unable to" not in public_ip:
         update_cf_public_ip(
             public_ip, 
             account_id, 
